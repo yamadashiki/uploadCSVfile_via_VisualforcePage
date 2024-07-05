@@ -1,0 +1,105 @@
+<apex:page docType="html-5.0" id="page_id" controller="DataImportCon">
+    <apex:includeScript value="{!URLFOR($Resource.jQuery)}" />
+    <apex:includeScript value="{!URLFOR($Resource.encord)}" />
+    <apex:includeScript value="{!URLFOR($Resource.PapaParse)}" />
+    <script>
+        const MAX_STRINGS = 1000000;
+
+        function parseCSV(file) {
+            return new Promise((resolve, reject) => {
+                var parsedData = [];
+                var colnum = 0;
+                Papa.parse(file, {
+                    header: false, // ヘッダー行がある場合はtrue
+                    encoding: 'Shift-JIS',
+                    complete: function (results) {
+                        parsedData = results.data;
+                        var row = parsedData[0];
+                        var confirmed = confirm('インポートを開始しますか？');
+                        if (confirmed) {
+                            resolve([parsedData, colnum]);
+                        }else{
+                            return;
+                        }
+                    }
+                });
+            })
+        }
+
+        // toStringでUNICODE（UTF8）に変換
+        const convert2String = function (file) {
+            const encoding = Encoding.detect(file);
+            var unicodeString = Encoding.convert(file, {
+                to: 'UNICODE',
+                from: encoding
+            });
+            var utf8String = unicodeString.toString();
+            return utf8String;
+        }
+
+        // APEX実行
+        const REMOTEACTION_OPTIONS = { buffer: false, escape: true, timeout: 120000 };
+        function postApex(data) {
+            return new Promise((resolve, reject) => {
+Visualforce.remoting.Manager.invokeAction('{!$RemoteAction.DataImportCon.readCsvFile}',
+                    data,
+                    (result, event) => {
+                        if (event.status){
+                            resolve(result);
+                        }else {
+                            alert("CSV取り込みが失敗しました");
+                            reject(event);
+                            return;
+                        }
+                    }, this.REMOTEACTION_OPTIONS);
+            });
+        }
+
+        // APEXコントローラーへ値を渡す処理
+        async function sendCSVData2Controller(_file) {
+            const noOfChunks = _file.length;
+            const promises = [];
+            var convertedData = '';
+            for (var i = 0; i < noOfChunks; i++) {
+                if (_file[i].length > 1) {
+                    convertedData += await convert2String(_file[i]) + '\n';
+                    if (convertedData.length >= MAX_STRINGS) {
+                        var orderPromise = await postApex(convertedData);
+                        convertedData = '';
+                        promises.push(orderPromise);
+                    }
+                }
+            }
+            if (convertedData .length >= 0) {
+                var lastorderPromise = await postApex(convertedData);
+                promises.push(lastorderPromise );
+            }
+            const result = Promise.all(promises);
+            return (console.log("JS処理終了"), alert("CSV取り込みが完了しました"));
+        }
+
+        // async処理全体概要
+        async function main(file) {
+            console.log("JS処理開始");
+            var parsedCSV = await parseCSV(file);
+            const result = sendCSVData2Controller(parsedCSV[0]);
+            console.log("APEX処理開始");
+        }
+        main();
+
+        // 取得データチェック処理
+        function checkFile() {
+            const fileinput = document.getElementById('file_input');
+            const file = fileinput.files[0];
+            if (typeof file === "undefined") {
+                alert("CSVファイルが選択されていません。");
+                return;
+            } else {
+                main(file);
+            }
+        }
+    </script>
+    <input type="file" id="file_input" name="attFile" accept=".csv" />
+    <br />
+    <button onclick="checkFile(); return false;" value="CSV読み込み">Upload File</button>
+</apex:page>
